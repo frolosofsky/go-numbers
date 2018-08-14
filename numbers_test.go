@@ -1,17 +1,17 @@
 package main
 
-import(
-	"testing"
-	"time"
-	"net/http"
-	"net/http/httptest"
-	"log"
+import (
+	"context"
 	"encoding/json"
 	"io/ioutil"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"sync"
-	"context"
-	"net/url"
+	"testing"
+	"time"
 )
 
 // Constructs HTTP request handler with predefined response and timeout
@@ -28,8 +28,8 @@ func makeStubHandler(data string, timeout int) func(http.ResponseWriter, *http.R
 // TODO: Further investigation required.
 func startServer(t *testing.T, port int) *http.Server {
 	server := &http.Server{
-		Addr: "127.0.0.1:8080",
-		ReadTimeout: 3 * time.Second,
+		Addr:         "127.0.0.1:8080",
+		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
 	}
 	go func() {
@@ -57,8 +57,8 @@ func numbers_cmp(a, b []int) bool {
 // Wrapper for passing http requests and comparing responses with expected values
 func numbers_get(t *testing.T, url string, expected_status int, expected_numbers []int) {
 	g := NumbersGetterHttp{}
-	 // rough, 600 = 500 + routines overhead + transport overhead. Everything is in a single process.
-	ctx, _ := context.WithTimeout(context.Background(), 600 * time.Millisecond)
+	// rough, 600 = 500 + routines overhead + transport overhead. Everything is in a single process.
+	ctx, _ := context.WithTimeout(context.Background(), 600*time.Millisecond)
 	result, status, err := g.get(ctx, url)
 	if ctx.Err() != nil {
 		t.Errorf("Request failed: %s", ctx.Err())
@@ -112,7 +112,6 @@ func numbers_rr(t *testing.T, url string, handler http.HandlerFunc, expected_sta
 	}
 }
 
-
 // NumbersGetterStub(Cfg) implements mock for fetching data provided by /test-endpoints in memory w/o network layer
 type NumbersGetterStubCfg struct {
 	Numbers []int
@@ -120,7 +119,7 @@ type NumbersGetterStubCfg struct {
 }
 
 func stubConfig(numbers []int, timeout int) NumbersGetterStubCfg {
-	return NumbersGetterStubCfg {
+	return NumbersGetterStubCfg{
 		Numbers: numbers,
 		Timeout: time.Duration(timeout) * time.Millisecond,
 	}
@@ -131,7 +130,8 @@ type NumbersGetterStub struct {
 }
 
 func (g NumbersGetterStub) get(ctx context.Context, url string) ([]int, int, error) {
-	n, ok := g.Config[url]; if ok {
+	n, ok := g.Config[url]
+	if ok {
 		time.Sleep(n.Timeout)
 		return n.Numbers, 200, nil
 	} else {
@@ -142,30 +142,30 @@ func (g NumbersGetterStub) get(ctx context.Context, url string) ([]int, int, err
 func TestCollectNumbers(t *testing.T) {
 	log.SetFlags(0)
 	log.SetOutput(ioutil.Discard)
-	cases := []struct{
-		Input [][]int
+	cases := []struct {
+		Input  [][]int
 		Result []int
-	} {{
-		Input: [][]int{},
+	}{{
+		Input:  [][]int{},
 		Result: []int{},
-	},{
-		Input: [][]int{[]int{}},
+	}, {
+		Input:  [][]int{[]int{}},
 		Result: []int{},
-	},{
-		Input: [][]int{[]int{}, []int{}},
+	}, {
+		Input:  [][]int{[]int{}, []int{}},
 		Result: []int{},
-	},{
-		Input: [][]int{[]int{1}},
+	}, {
+		Input:  [][]int{[]int{1}},
 		Result: []int{1},
-	},{
-		Input: [][]int{[]int{1}, []int{1}},
+	}, {
+		Input:  [][]int{[]int{1}, []int{1}},
 		Result: []int{1},
-	},{
-		Input: [][]int{[]int{1,3}, []int{2}},
-		Result: []int{1,2,3},
-	},{
-		Input: [][]int{[]int{9,1}, []int{1}, []int{5,1,42}},
-		Result: []int{1,5,9,42},
+	}, {
+		Input:  [][]int{[]int{1, 3}, []int{2}},
+		Result: []int{1, 2, 3},
+	}, {
+		Input:  [][]int{[]int{9, 1}, []int{1}, []int{5, 1, 42}},
+		Result: []int{1, 5, 9, 42},
 	}}
 	channel := make(chan []int, 10)
 	for _, c := range cases {
@@ -180,17 +180,17 @@ func TestCollectNumbers(t *testing.T) {
 
 	channel <- []int{1, 2}
 	channel <- []int{0, 0}
-	ctx, _ := context.WithTimeout(context.Background(), 100 * time.Millisecond)
+	ctx, _ := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	result := collectNumbers(ctx, 999, channel)
 	if !numbers_cmp(result, []int{0, 1, 2}) {
-		t.Errorf("collect %v, got %v, expected %v", [][]int{[]int{1,2},[]int{0,0}}, result, []int{0,1,2})
+		t.Errorf("collect %v, got %v, expected %v", [][]int{[]int{1, 2}, []int{0, 0}}, result, []int{0, 1, 2})
 	}
 }
 
 type TestCase struct {
-	Url string
+	Url     string
 	Numbers []int
-	Status int
+	Status  int
 }
 
 func TestBasic(t *testing.T) {
@@ -206,7 +206,7 @@ func TestBasic(t *testing.T) {
 			"/test6": stubConfig([]int{1001, 1002}, 550),
 		},
 	}
-	testCases := []TestCase {
+	testCases := []TestCase{
 		{Url: "/numbers?u=/wrong", Numbers: nil, Status: 200},
 		{Url: "/numbers?u=/test1", Numbers: []int{1, 2, 3, 4}, Status: 200},
 		{Url: "/numbers?u=/test1&u=/test2", Numbers: []int{1, 2, 3, 4, 5, 6}, Status: 200},
@@ -245,7 +245,7 @@ func TestConcurent(t *testing.T) {
 			"/test6": stubConfig([]int{1001, 1002}, 550),
 		},
 	}
-	testCases := []TestCase {
+	testCases := []TestCase{
 		{Url: "/numbers?u=/wrong", Numbers: nil, Status: 200},
 		{Url: "/numbers?u=/test1", Numbers: []int{1, 2, 3, 4}, Status: 200},
 		{Url: "/numbers?u=/test1&u=/test2", Numbers: []int{1, 2, 3, 4, 5, 6}, Status: 200},
@@ -262,7 +262,7 @@ func TestConcurent(t *testing.T) {
 				start := time.Now()
 				numbers_rr(t, test.Url, handler, test.Status, test.Numbers)
 				elapsed := time.Now().Sub(start)
-				if elapsed > 550 * time.Millisecond {
+				if elapsed > 550*time.Millisecond {
 					t.Errorf("Requesting %s have taken %v", test.Url, elapsed)
 				}
 			}(test)
@@ -287,7 +287,7 @@ func TestHTTP(t *testing.T) {
 	http.HandleFunc("/test5", makeStubHandler(`{"numbers": [101, 102]}`, 450))
 	http.HandleFunc("/test6", makeStubHandler(`{"numbers": [1001, 1002]}`, 550))
 	startServer(t, 8080)
-	testCases := []TestCase {
+	testCases := []TestCase{
 		{Url: "http://127.0.0.1:8080/malformed1", Numbers: nil, Status: -1},
 		{Url: "http://127.0.0.1:8080/malformed2", Numbers: nil, Status: -1},
 		{Url: "http://127.0.0.1:8080/unimplemented", Numbers: nil, Status: 404},
@@ -311,9 +311,9 @@ func TestHTTP(t *testing.T) {
 	q.Add("u", "http://127.0.0.1:8080/test5")
 	q.Add("u", "http://127.0.0.1:8080/numbers?u=http://127.0.0.1:8080/test2&u=http://127.0.0.1:8080/test4")
 	u := url.URL{
-		Scheme: "http",
-		Host: "127.0.0.1:8080",
-		Path: "numbers",
+		Scheme:   "http",
+		Host:     "127.0.0.1:8080",
+		Path:     "numbers",
 		RawQuery: q.Encode(),
 	}
 	numbers_get(t, u.String(), 200, []int{1, 5, 6, 11, 12, 101, 102})

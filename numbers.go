@@ -1,13 +1,13 @@
 package main
 
 import (
-	"net/http"
-	"log"
-	"encoding/json"
-	"time"
-	"io/ioutil"
-	"sort"
 	"context"
+	"encoding/json"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"sort"
+	"time"
 )
 
 // Simplifies json encoding/decoding
@@ -42,7 +42,7 @@ type NumbersGetter interface {
 
 // Http implementation of `NumbersGetter`.
 // `get` blocks current routine until it fetches data from endpoint, or error occurs, or context cancelled.
-type NumbersGetterHttp struct {}
+type NumbersGetterHttp struct{}
 
 func (NumbersGetterHttp) get(ctx context.Context, url string) ([]int, int, error) {
 	req, err := http.NewRequest("GET", url, nil)
@@ -112,15 +112,15 @@ func fetchNumbers(ctx context.Context, g NumbersGetter, url string, c chan []int
 func makeNumbersHandler(g NumbersGetter) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		q := r.URL.Query();
+		q := r.URL.Query()
 		urls := q["u"]
 		c := make(chan []int)
-		ctx, _ := context.WithTimeout(r.Context(), 500 * time.Millisecond)
+		ctx, _ := context.WithTimeout(r.Context(), 500*time.Millisecond)
 		for _, url := range urls {
 			go fetchNumbers(ctx, g, url, c)
 		}
 		numbers := collectNumbers(ctx, len(urls), c)
-		data, _ := json.Marshal(Numbers{Numbers:numbers})
+		data, _ := json.Marshal(Numbers{Numbers: numbers})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write(data)
