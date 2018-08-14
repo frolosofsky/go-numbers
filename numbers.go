@@ -7,19 +7,19 @@ import (
 	"time"
 	"io/ioutil"
 	"sort"
+	"context"
 )
 
+// Simplifies json encoding/decoding
 type Numbers struct {
 	Numbers []int `json:"numbers"`
 }
 
-func setPutValue(set map[int]struct{}, value int) {
-	set[value] = struct{}{}
-}
-
-func setPutArray(set map[int]struct{}, values []int) {
-	for _, v := range values {
-		setPutValue(set, v)
+// set* functions
+// Workarounded traditional (and obviously sorted) set
+func setAdd(set map[int]struct{}, value ...int) {
+	for _, v := range value {
+		set[v] = struct{}{}
 	}
 }
 
@@ -32,30 +32,37 @@ func setToArray(set map[int]struct{}) []int {
 	return result
 }
 
+// Purpose: to abstract fetching numbers from url.
+// Returns: numbers slice (nil if error),
+//          HTTP status code (-1 if error)
+//          Error (nil if no error)
 type NumbersGetter interface {
-	get(url string, timeout time.Duration) ([]int, int, error)
+	get(ctx context.Context, url string) ([]int, int, error)
 }
 
+// Http implementation of `NumbersGetter`.
+// `get` blocks current routine until it fetches data from endpoint, or error occurs, or context cancelled.
 type NumbersGetterHttp struct {}
 
-func (NumbersGetterHttp) get(url string, timeout time.Duration) ([]int, int, error) {
-	client := http.Client {
-		Timeout: timeout,
-		Transport: &http.Transport{DisableKeepAlives: true},
+func (NumbersGetterHttp) get(ctx context.Context, url string) ([]int, int, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, -1, err
 	}
-	res, err := client.Get(url)
+	client := http.Client{}
+	res, err := client.Do(req.WithContext(ctx))
 	if res != nil {
 		defer res.Body.Close()
 	}
 	if err != nil {
 		return nil, -1, err
 	}
+	if res.StatusCode != http.StatusOK {
+		return nil, res.StatusCode, nil
+	}
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		return nil, -1, err
-	}
-	if res.StatusCode != http.StatusOK {
-		return nil, res.StatusCode, nil
 	}
 	numbers := Numbers{}
 	err = json.Unmarshal(body, &numbers)
@@ -65,67 +72,67 @@ func (NumbersGetterHttp) get(url string, timeout time.Duration) ([]int, int, err
 	return numbers.Numbers, res.StatusCode, nil
 }
 
-func collectNumbers(w http.ResponseWriter, expected int, c <-chan []int, c_timeout <-chan time.Time) {
+// Retrieves numbers from channel `c`. Blocks current routine until gets `expected` amount of results or context cancelled.
+// Stores collected data in a `result` set. Returns sorted array representation of the set.
+func collectNumbers(ctx context.Context, expected int, c <-chan []int) []int {
 	result := make(map[int]struct{})
 	for expected > 0 {
 		select {
 		case numbers := <-c:
 			log.Printf("Got numbers: %v\n", numbers)
 			expected -= 1
-			setPutArray(result, numbers)
-		case <-c_timeout:
-			log.Printf("Timeout, unprocessed urls: %d\n", expected)
+			setAdd(result, numbers...)
+		case <-ctx.Done():
+			log.Printf("Unhandled urls: %d\n", expected)
 			expected = 0
 		}
 	}
-	data, _ := json.Marshal(Numbers{Numbers:setToArray(result)})
-	w.Write(data)
+	return setToArray(result)
+}
+
+// Fetches numbers, pass to channel (to be processed by `collectNumbers`), log errors
+func fetchNumbers(ctx context.Context, g NumbersGetter, url string, c chan []int) {
+	var result []int
+	if numbers, status, err := g.get(ctx, url); err != nil {
+		log.Println(err)
+	} else if status != http.StatusOK {
+		log.Printf("%s responded with %d", url, status)
+	} else {
+		result = numbers
+	}
+	select {
+	case <-ctx.Done():
+	case c <- result: // pass result even if error occured (let `collectNumbers` decrement it's `expected`)
+	}
 }
 
 // Constructs handler for /numbers request
+// Handler creates and configures context in order to cancel all sub-requests which are timed out and
+// when client closes connection.
 func makeNumbersHandler(g NumbersGetter) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		timer := time.NewTimer(500 * time.Millisecond)
 		q := r.URL.Query();
 		urls := q["u"]
-		c := make(chan []int, 10)
-		done := make(chan struct{})
+		c := make(chan []int)
+		ctx, _ := context.WithTimeout(r.Context(), 500 * time.Millisecond)
 		for _, url := range urls {
-			go func(url string) {
-				var result []int
-				if numbers, status, err := g.get(url, 500 * time.Millisecond); err != nil {
-					log.Println(err)
-				} else if status != http.StatusOK {
-					log.Printf("%s responded with %d", url, status)
-				} else {
-					result = numbers
-				}
-				select {
-				case <-done:
-					return
-				default:
-					c <- result
-				}
-			}(url)
+			go fetchNumbers(ctx, g, url, c)
 		}
-		collectNumbers(w, len(urls), c, timer.C)
-		close(done) // notify long-processing getter to not send new data
-		timer.Stop()
+		numbers := collectNumbers(ctx, len(urls), c)
+		data, _ := json.Marshal(Numbers{Numbers:numbers})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
 		log.Printf("Processing took %v", time.Now().Sub(start))
 	}
 }
 
-// Constructs handler for numbers source API
-// func makeStubHandler(numbers []int, timeout time.Duration) func(http.ResponseWriter, *http.Request) {
-// 	data, _ := json.Marshal(Numbers{Numbers: numbers})
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		time.Sleep(timeout * time.Millisecond)
-// 		fmt.Fprintf(w, "%s", data)
-// 	}
-// }
+func makeHttpNumbersHandler() func(http.ResponseWriter, *http.Request) {
+	return makeNumbersHandler(NumbersGetterHttp{})
+}
 
 func main() {
-	http.HandleFunc("/numbers", makeNumbersHandler(NumbersGetterHttp{}))
-	log.Fatal(http.ListenAndServe("localhost:8080", nil))
+	http.HandleFunc("/numbers", makeHttpNumbersHandler())
+	log.Fatal(http.ListenAndServe("127.0.0.1:8080", nil))
 }
